@@ -8,7 +8,9 @@ from tqdm import tqdm
 import concurrent.futures
 
 # Load the MiDaS model (pre-trained model for monocular depth estimation)
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 model = torch.hub.load("intel-isl/MiDaS", "MiDaS")
+model = model.to(device)
 model.eval()
 
 # Transform for the model (standardization)
@@ -27,7 +29,7 @@ def resize_image(image):
 def estimate_depth(image):
     """Estimate depth map using MiDaS model."""
     image = resize_image(image)
-    input_image = transform(image).unsqueeze(0)
+    input_image = transform(image).unsqueeze(0).to(device)
     with torch.no_grad():
         depth_map = model(input_image)
     return depth_map.squeeze().cpu().numpy()
@@ -69,7 +71,7 @@ def main(video_path, num_frames=0):
     all_colors = []
 
     with tqdm(total=total_frames, desc="Processing frames") as pbar:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        with concurrent.futures.ProcessPoolExecutor() as executor:  # Use ProcessPoolExecutor for parallel processing
             futures = []
             for _ in range(total_frames):
                 ret, frame_rgb = cap.read()
