@@ -1,129 +1,123 @@
-import open3d as o3d
-import numpy as np
+import torch
 import cv2
+import numpy as np
+import open3d as o3d
+from torchvision import transforms
+from PIL import Image
+from tqdm import tqdm
+
+# Load the MiDaS model (pre-trained model for monocular depth estimation)
+model = torch.hub.load("intel-isl/MiDaS", "MiDaS")
+model.eval()
+
+# Transform for the model (standardization)
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
 
 
-# Function to load a single RGB frame and depth frame from a video
-def load_rgbd_from_video(frame_rgb, frame_depth, depth_scale=1000.0):
-    rgb = cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB)  # Convert from BGR to RGB
-
-    # Depth frame conversion (if using an RGB-D camera, depth is usually in meters, but might need scaling)
-    depth = frame_depth / depth_scale  # Adjust depending on your video format
-
-    # Create Open3D RGBD image
-    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
-        o3d.geometry.Image(rgb),
-        o3d.geometry.Image(depth),
-        depth_trunc=3.0,  # Optional: Set depth truncation if needed
-        convert_rgb_to_intensity=False
-    )
-    return rgbd_image
+def resize_image(image):
+    """Resize image to be divisible by 32."""
+    width, height = image.size
+    new_width = (width // 32) * 32
+    new_height = (height // 32) * 32
+    return image.resize((new_width, new_height), Image.BILINEAR)
 
 
-# Function to generate point cloud from RGBD image
-def rgbd_to_point_cloud(rgbd_image, intrinsics):
-    # Create a pinhole camera intrinsic object
-    intrinsic = o3d.camera.PinholeCameraIntrinsic(
-        width=intrinsics["width"],
-        height=intrinsics["height"],
-        fx=intrinsics["fx"],
-        fy=intrinsics["fy"],
-        cx=intrinsics["cx"],
-        cy=intrinsics["cy"]
-    )
+def estimate_depth(image):
+    # Resize the image to make its dimensions divisible by 32
+    image = resize_image(image)
 
-    # Generate point cloud from RGBD image
-    pcd = o3d.geometry.PointCloud.create_from_rgbd_image(
-        rgbd_image,
-        intrinsic
-    )
+    # Convert image to the format required by MiDaS
+    input_image = transform(image).unsqueeze(0)
 
-    # Estimate normals for the point cloud
-    pcd.estimate_normals(
-        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
-    )
+    # Run depth estimation
+    with torch.no_grad():
+        depth_map = model(input_image)
 
+    # Normalize depth map
+    depth_map = depth_map.squeeze().cpu().numpy()
+
+    return depth_map
+
+
+def process_frame(frame_rgb):
+    # Convert the frame to a PIL image (OpenCV uses BGR by default, so convert it to RGB first)
+    pil_image = Image.fromarray(cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB))
+
+    # Estimate depth from the frame
+    depth_map = estimate_depth(pil_image)
+
+    # Convert the depth map to a 3D point cloud using Open3D (make sure depth is in meters)
+    height, width = depth_map.shape
+    fx = 525.0  # Focal length in x
+    fy = 525.0  # Focal length in y
+    cx = width / 2.0  # Optical center x
+    cy = height / 2.0  # Optical center y
+
+    # Generate point cloud
+    points = []
+    colors = []
+    for v in range(height):
+        for u in range(width):
+            z = depth_map[v, u]
+            if z == 0:
+                continue  # Skip invalid depth values (if any)
+            x = (u - cx) * z / fx
+            y = (v - cy) * z / fy
+            points.append([x, y, z])
+
+            # Assign color based on depth (you can adjust this to use RGB or other)
+            color = [z / np.max(depth_map), 0, 1 - (z / np.max(depth_map))]  # Color gradient from blue to red
+            colors.append(color)
+
+    # Convert to Open3D point cloud
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.array(points))
+    pcd.colors = o3d.utility.Vector3dVector(np.array(colors))  # Set color based on depth
     return pcd
 
 
-# Function to process point cloud (downsampling, mesh generation)
-def process_point_cloud(pcd):
-    voxel_size = 0.05  # Adjust for desired detail level
-    pcd_downsampled = pcd.voxel_down_sample(voxel_size)
-
-    # Surface reconstruction using Poisson reconstruction
-    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-        pcd, depth=9
-    )
-
-    # Remove low-density vertices (optional)
-    vertices_to_remove = densities < np.percentile(densities, 10)  # Remove bottom 10% density
-    mesh.remove_vertices_by_mask(vertices_to_remove)
-
-    return mesh
-
-
-# Visualization function for point cloud and mesh
-def visualize(pcd, mesh):
-    o3d.visualization.draw_geometries([pcd, mesh])
-
-
-# Main function for video 3D reconstruction
-def main(video_path, num_frames=10):
-    # Open the video using OpenCV
+def main(video_path, num_frames=0):
     cap = cv2.VideoCapture(video_path)
 
-    # Check if the video opened successfully
-    if not cap.isOpened():
-        print("Error: Could not open video.")
-        return
+    if (num_frames == 0):
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    else:
+        total_frames = num_frames
 
-    # Get video dimensions (width, height) from the video file
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"frames: {num_frames}")
 
-    # Camera intrinsic parameters (adjust for your setup)
-    intrinsics = {
-        "width": width,
-        "height": height,
-        "fx": 525.0,  # Focal length in x-axis (adjust according to your camera)
-        "fy": 525.0,  # Focal length in y-axis (adjust according to your camera)
-        "cx": width / 2.0,  # Optical center in x-axis (assuming the center of the image)
-        "cy": height / 2.0  # Optical center in y-axis (assuming the center of the image)
-    }
-
-    # Loop through the first `num_frames` in the video
-    pcd_combined = o3d.geometry.PointCloud()
+    pcd_combined = o3d.geometry.PointCloud()  # Initialize an empty point cloud to accumulate frames
     frame_count = 0
-    while cap.isOpened() and frame_count < num_frames:
-        ret, frame_rgb = cap.read()
-        if not ret:
-            break
+    with tqdm(total=total_frames, desc="Processing frames") as pbar:
 
-        # Assuming you also have a depth video stream (or a method for extracting depth from RGB)
-        # For now, let's assume the depth map is the same size as the RGB frame and is a dummy array.
-        frame_depth = np.random.uniform(0, 3, (frame_rgb.shape[0], frame_rgb.shape[1])).astype(np.float32)
+        while cap.isOpened() and frame_count < num_frames:
+            ret, frame_rgb = cap.read()
+            if not ret:
+                break
 
-        # Load the RGB-D image
-        rgbd_image = load_rgbd_from_video(frame_rgb, frame_depth)
+            # Estimate depth and create point cloud
+            pcd = process_frame(frame_rgb)
 
-        # Generate point cloud
-        pcd = rgbd_to_point_cloud(rgbd_image, intrinsics)
+            # Combine the point clouds from each frame
+            pcd_combined += pcd
 
-        # Combine point clouds (you can also perform registration or frame alignment here)
-        pcd_combined += pcd
+            frame_count += 1  # Increment the frame count
 
-        frame_count += 1
+        cap.release()  # Release the video capture object
 
-    cap.release()  # Close the video file
+    # After processing all frames, downsample the combined point cloud
+    voxel_size = 0.1  # Adjust as needed
+    pcd_combined_downsampled = pcd_combined.voxel_down_sample(voxel_size)
 
-    # Process the combined point cloud (downsampling, reconstruction)
-    mesh = process_point_cloud(pcd_combined)
-
-    # Visualize the final point cloud and mesh
-    visualize(pcd_combined, mesh)
+    # Visualize the final combined point cloud
+    o3d.visualization.draw_geometries([pcd_combined_downsampled])
 
 
 if __name__ == "__main__":
-    video_path = "test.mp4"  # Set your video path here
-    main(video_path, num_frames=1)  # Use only the first 10 frames for debugging
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    video_path = "test.mp4"  # Replace with your actual path
+    main(video_path, num_frames=10)  # Process only the first 10 frames for debugging
