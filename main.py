@@ -65,6 +65,19 @@ def process_frame(frame_rgb):
     return points, colors
 
 
+def process_batch(batch_frames):
+    """Process a batch of frames and combine the results."""
+    all_points = []
+    all_colors = []
+
+    for frame_rgb in batch_frames:
+        points, colors = process_frame(frame_rgb)
+        all_points.extend(points)
+        all_colors.extend(colors)
+
+    return all_points, all_colors
+
+
 def feature_matching(frame1, frame2):
     """Use ORB to detect and match features between two frames."""
     orb = cv2.ORB_create()
