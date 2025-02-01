@@ -19,12 +19,14 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
+
 def resize_image(image):
     """Resize image to be divisible by 32."""
     width, height = image.size
     new_width = (width // 32) * 32
     new_height = (height // 32) * 32
     return image.resize((new_width, new_height), Image.BILINEAR)
+
 
 def estimate_depth(image):
     """Estimate depth map using MiDaS model."""
@@ -33,6 +35,7 @@ def estimate_depth(image):
     with torch.no_grad():
         depth_map = model(input_image)
     return depth_map.squeeze().cpu().numpy()
+
 
 def process_frame(frame_rgb):
     """Process a frame to generate a point cloud."""
@@ -61,7 +64,21 @@ def process_frame(frame_rgb):
 
     return points, colors
 
-def main(video_path, num_frames=0):
+
+def process_batch(batch_frames):
+    """Process a batch of frames and combine the results."""
+    all_points = []
+    all_colors = []
+
+    for frame_rgb in batch_frames:
+        points, colors = process_frame(frame_rgb)
+        all_points.extend(points)
+        all_colors.extend(colors)
+
+    return all_points, all_colors
+
+
+def main(video_path, num_frames=0, batch_size=10):
     cap = cv2.VideoCapture(video_path)
     total_frames = num_frames if num_frames > 0 else int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
@@ -70,22 +87,28 @@ def main(video_path, num_frames=0):
     all_points = []
     all_colors = []
 
+    # Process the frames in batches
     with tqdm(total=total_frames, desc="Processing frames") as pbar:
-        with concurrent.futures.ProcessPoolExecutor() as executor:  # Use ProcessPoolExecutor for parallel processing
-            futures = []
-            for _ in range(total_frames):
-                ret, frame_rgb = cap.read()
-                if not ret:
-                    break
-                futures.append(executor.submit(process_frame, frame_rgb))
+        batch_frames = []
+        frame_count = 0
 
-            cap.release()
+        while cap.isOpened() and frame_count < total_frames:
+            ret, frame_rgb = cap.read()
+            if not ret:
+                break
 
-            for future in concurrent.futures.as_completed(futures):
-                points, colors = future.result()
+            batch_frames.append(frame_rgb)
+            frame_count += 1
+
+            # Process and accumulate points/colors once we reach the batch size
+            if len(batch_frames) == batch_size or frame_count == total_frames:
+                points, colors = process_batch(batch_frames)
                 all_points.extend(points)
                 all_colors.extend(colors)
-                pbar.update(1)
+                batch_frames = []  # Clear the batch
+                pbar.update(len(batch_frames))
+
+        cap.release()  # Release the video capture object
 
     # After processing all frames, create a point cloud
     pcd_combined = o3d.geometry.PointCloud()
@@ -99,8 +122,8 @@ def main(video_path, num_frames=0):
     # Visualize the final combined point cloud
     o3d.visualization.draw_geometries([pcd_combined_downsampled])
 
+
 if __name__ == "__main__":
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     video_path = "test.mp4"  # Replace with your actual path
-    main(video_path, num_frames=100)  # Process only the first 100 frames for debugging
+    main(video_path, num_frames=50, batch_size=5)  # Process in batches of 5 frames
