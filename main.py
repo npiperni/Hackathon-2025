@@ -5,6 +5,7 @@ import open3d as o3d
 from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
+import concurrent.futures
 
 # Load the MiDaS model (pre-trained model for monocular depth estimation)
 model = torch.hub.load("intel-isl/MiDaS", "MiDaS")
@@ -39,7 +40,7 @@ def estimate_depth(image):
 
     return depth_map
 
-def process_frame(frame_rgb):
+def process_frame(frame_rgb, pbar=None):
     # Convert the frame to a PIL image (OpenCV uses BGR by default, so convert it to RGB first)
     pil_image = Image.fromarray(cv2.cvtColor(frame_rgb, cv2.COLOR_BGR2RGB))
 
@@ -73,6 +74,10 @@ def process_frame(frame_rgb):
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(np.array(points))
     pcd.colors = o3d.utility.Vector3dVector(np.array(colors))  # Set color from the original frame
+
+    if pbar:
+        pbar.update(1)  # Update tqdm progress bar inside the worker function
+
     return pcd
 
 def main(video_path, num_frames=0):
@@ -83,37 +88,40 @@ def main(video_path, num_frames=0):
     else:
         total_frames = num_frames
 
-    print(f"frames: {total_frames}")
+    print(f"Frames: {total_frames}")
 
     pcd_combined = o3d.geometry.PointCloud()  # Initialize an empty point cloud to accumulate frames
     frame_count = 0
+    voxel_size = 1  # Adjust the voxel size as needed
+
     with tqdm(total=total_frames, desc="Processing frames") as pbar:
+        # Using ThreadPoolExecutor for parallel processing
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = []
+            for frame_count in range(total_frames):
+                ret, frame_rgb = cap.read()
+                if not ret:
+                    break
+                # Submit the frame processing to the executor
+                futures.append(executor.submit(process_frame, frame_rgb, pbar))
 
-        while cap.isOpened() and frame_count < total_frames:
-            ret, frame_rgb = cap.read()
-            if not ret:
-                break
+            cap.release()  # Release the video capture object
 
-            # Estimate depth and create point cloud
-            pcd = process_frame(frame_rgb)
+            # Collect the results and accumulate the point clouds
+            for future in concurrent.futures.as_completed(futures):
+                pcd = future.result()
 
-            # Combine the point clouds from each frame
-            pcd_combined += pcd
+                # Downsample the point cloud for the current frame
+                pcd_downsampled = pcd.voxel_down_sample(voxel_size)
 
-            frame_count += 1  # Increment the frame count
-            pbar.update(1)
-
-        cap.release()  # Release the video capture object
-
-    # After processing all frames, downsample the combined point cloud
-    voxel_size = 0.1  # Adjust as needed
-    pcd_combined_downsampled = pcd_combined.voxel_down_sample(voxel_size)
+                # Combine the downsampled point clouds from each frame
+                pcd_combined += pcd_downsampled
 
     # Visualize the final combined point cloud
-    o3d.visualization.draw_geometries([pcd_combined_downsampled])
+    o3d.visualization.draw_geometries([pcd_combined])
 
 if __name__ == "__main__":
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     video_path = "test.mp4"  # Replace with your actual path
-    main(video_path, num_frames=0)  # Process only the first 50 frames for debugging
+    main(video_path, num_frames=75)  # Process only the first 100 frames for debugging
