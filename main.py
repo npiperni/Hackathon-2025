@@ -16,14 +16,12 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-
 def resize_image(image):
     """Resize image to be divisible by 32."""
     width, height = image.size
     new_width = (width // 32) * 32
     new_height = (height // 32) * 32
     return image.resize((new_width, new_height), Image.BILINEAR)
-
 
 def estimate_depth(image):
     # Resize the image to make its dimensions divisible by 32
@@ -40,7 +38,6 @@ def estimate_depth(image):
     depth_map = depth_map.squeeze().cpu().numpy()
 
     return depth_map
-
 
 def process_frame(frame_rgb):
     # Convert the frame to a PIL image (OpenCV uses BGR by default, so convert it to RGB first)
@@ -68,16 +65,15 @@ def process_frame(frame_rgb):
             y = (v - cy) * z / fy
             points.append([x, y, z])
 
-            # Assign color based on depth (you can adjust this to use RGB or other)
-            color = [z / np.max(depth_map), 0, 1 - (z / np.max(depth_map))]  # Color gradient from blue to red
-            colors.append(color)
+            # Extract RGB color from the frame (already in RGB)
+            r, g, b = frame_rgb[v, u]
+            colors.append([r / 255.0, g / 255.0, b / 255.0])  # Normalize to [0, 1]
 
     # Convert to Open3D point cloud
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(np.array(points))
-    pcd.colors = o3d.utility.Vector3dVector(np.array(colors))  # Set color based on depth
+    pcd.colors = o3d.utility.Vector3dVector(np.array(colors))  # Set color from the original frame
     return pcd
-
 
 def main(video_path, num_frames=0):
     cap = cv2.VideoCapture(video_path)
@@ -105,6 +101,7 @@ def main(video_path, num_frames=0):
             pcd_combined += pcd
 
             frame_count += 1  # Increment the frame count
+            pbar.update(1)
 
         cap.release()  # Release the video capture object
 
@@ -115,9 +112,8 @@ def main(video_path, num_frames=0):
     # Visualize the final combined point cloud
     o3d.visualization.draw_geometries([pcd_combined_downsampled])
 
-
 if __name__ == "__main__":
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     video_path = "test.mp4"  # Replace with your actual path
-    main(video_path, num_frames=10)  # Process only the first 10 frames for debugging
+    main(video_path, num_frames=10)  # Process only the first 50 frames for debugging
