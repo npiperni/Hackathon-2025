@@ -78,18 +78,18 @@ def process_frame(frame_rgb):
 def main(video_path, num_frames=0):
     cap = cv2.VideoCapture(video_path)
 
-    if (num_frames == 0):
+    if num_frames == 0:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     else:
         total_frames = num_frames
 
-    print(f"frames: {num_frames}")
+    print(f"frames: {total_frames}")
 
     pcd_combined = o3d.geometry.PointCloud()  # Initialize an empty point cloud to accumulate frames
     frame_count = 0
     with tqdm(total=total_frames, desc="Processing frames") as pbar:
 
-        while cap.isOpened() and frame_count < num_frames:
+        while cap.isOpened() and frame_count < total_frames:
             ret, frame_rgb = cap.read()
             if not ret:
                 break
@@ -116,4 +116,4 @@ if __name__ == "__main__":
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     video_path = "test.mp4"  # Replace with your actual path
-    main(video_path, num_frames=10)  # Process only the first 50 frames for debugging
+    main(video_path, num_frames=0)  # Process only the first 50 frames for debugging
