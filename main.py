@@ -44,8 +44,8 @@ def process_frame(frame_rgb):
 
     # Convert depth map to point cloud
     height, width = depth_map.shape
-    fx = 525.0  # Focal length
-    fy = 525.0  # Focal length
+    fx = 958.0  # Focal length
+    fy = 958.0  # Focal length
     cx = width / 2.0  # Optical center
     cy = height / 2.0  # Optical center
 
