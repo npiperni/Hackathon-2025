@@ -5,7 +5,6 @@ import open3d as o3d
 from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
-import concurrent.futures
 
 # Load the MiDaS model (pre-trained model for monocular depth estimation)
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -120,8 +119,6 @@ def main(video_path, num_frames=0, batch_size=10):
     all_points = []
     all_colors = []
     prev_frame = None
-    prev_kp = None
-    prev_des = None
     K = np.array([[958.0, 0, 640.0], [0, 958.0, 360.0], [0, 0, 1]])  # Camera intrinsic matrix
 
     # Process the frames in batches
@@ -154,11 +151,11 @@ def main(video_path, num_frames=0, batch_size=10):
                     # Estimate the camera pose
                     R, t = estimate_camera_pose(points1, points2, K)
 
-                    # Here you can register the point clouds using R, t
-                    # Apply the transformation to align the point clouds
+                    # Register the point clouds using the camera pose
+                    transformed_points = np.dot(batch_points, R.T) + t.T
 
-                    # For now, just append the new points to the combined list
-                    all_points.extend(batch_points)
+                    # Combine the registered points with the existing point cloud
+                    all_points.extend(transformed_points)
                     all_colors.extend(batch_colors)
 
                 prev_frame = frame_rgb  # Update the previous frame
@@ -181,6 +178,5 @@ def main(video_path, num_frames=0, batch_size=10):
 
 
 if __name__ == "__main__":
-    print(f"Using device: {device}")
     video_path = "test.mp4"  # Replace with your actual path
     main(video_path, num_frames=50, batch_size=10)  # Process in batches of 10 frames
