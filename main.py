@@ -53,7 +53,7 @@ def process_point_cloud(pcd):
 
     # Surface reconstruction using Poisson reconstruction
     mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-        pcd_downsampled, depth=9
+        pcd, depth=9
     )
 
     # Remove low-density vertices (optional)
@@ -69,23 +69,33 @@ def visualize(pcd, mesh):
 
 
 # Main function for video 3D reconstruction
-def main(video_path):
+def main(video_path, num_frames=10):
     # Open the video using OpenCV
     cap = cv2.VideoCapture(video_path)
 
+    # Check if the video opened successfully
+    if not cap.isOpened():
+        print("Error: Could not open video.")
+        return
+
+    # Get video dimensions (width, height) from the video file
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
     # Camera intrinsic parameters (adjust for your setup)
     intrinsics = {
-        "width": 640,
-        "height": 480,
-        "fx": 525.0,  # Focal length in x-axis
-        "fy": 525.0,  # Focal length in y-axis
-        "cx": 319.5,  # Optical center in x-axis
-        "cy": 239.5  # Optical center in y-axis
+        "width": width,
+        "height": height,
+        "fx": 525.0,  # Focal length in x-axis (adjust according to your camera)
+        "fy": 525.0,  # Focal length in y-axis (adjust according to your camera)
+        "cx": width / 2.0,  # Optical center in x-axis (assuming the center of the image)
+        "cy": height / 2.0  # Optical center in y-axis (assuming the center of the image)
     }
 
-    # Loop through each frame in the video
+    # Loop through the first `num_frames` in the video
     pcd_combined = o3d.geometry.PointCloud()
-    while cap.isOpened():
+    frame_count = 0
+    while cap.isOpened() and frame_count < num_frames:
         ret, frame_rgb = cap.read()
         if not ret:
             break
@@ -103,6 +113,8 @@ def main(video_path):
         # Combine point clouds (you can also perform registration or frame alignment here)
         pcd_combined += pcd
 
+        frame_count += 1
+
     cap.release()  # Close the video file
 
     # Process the combined point cloud (downsampling, reconstruction)
@@ -114,4 +126,4 @@ def main(video_path):
 
 if __name__ == "__main__":
     video_path = "test.mp4"  # Set your video path here
-    main(video_path)
+    main(video_path, num_frames=1)  # Use only the first 10 frames for debugging
