@@ -106,7 +106,7 @@ def main(video_path, num_frames=0, batch_size=10):
                 all_points.extend(points)
                 all_colors.extend(colors)
                 batch_frames = []  # Clear the batch
-                pbar.update(len(batch_frames))
+                pbar.update(batch_size)  # Update progress bar for the batch size
 
         cap.release()  # Release the video capture object
 
@@ -126,4 +126,4 @@ def main(video_path, num_frames=0, batch_size=10):
 if __name__ == "__main__":
     print(f"Using device: {device}")
     video_path = "test.mp4"  # Replace with your actual path
-    main(video_path, num_frames=50, batch_size=5)  # Process in batches of 5 frames
+    main(video_path, num_frames=50, batch_size=10)  # Process in batches of 5 frames
