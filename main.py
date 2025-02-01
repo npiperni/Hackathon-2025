@@ -37,6 +37,12 @@ def rgbd_to_point_cloud(rgbd_image, intrinsics):
         rgbd_image,
         intrinsic
     )
+
+    # Estimate normals for the point cloud
+    pcd.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
+    )
+
     return pcd
 
 
