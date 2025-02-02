@@ -169,3 +169,6 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+.idea/Hackathon2025.iml
+.idea/misc.xml
+PXL_20250201_165648495.mp4
